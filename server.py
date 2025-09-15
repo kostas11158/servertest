@@ -1,14 +1,15 @@
+# server.py
 from flask import Flask, request, jsonify, render_template_string, redirect, url_for, session
 import sqlite3
 import os
 
 DB_FILE = "keys.db"
-ADMIN_KEY = "admin123"   # ключ, который всегда в базе
-ADMIN_LOGIN = "admin"    # логин для входа в веб-панель
-ADMIN_PASSWORD = "superpass"  # пароль для входа в веб-панель
-
 app = Flask(__name__)
-app.secret_key = "secret_flask_session"  # ключ для шифрования cookie
+app.secret_key = "supersecretkey"  # секрет для сессий (замени на свой)
+
+# ===== Авторизация =====
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "12345"
 
 # ===== Работа с БД =====
 def init_db():
@@ -65,34 +66,54 @@ def check_key():
         return jsonify({"status": "ok"})
     return jsonify({"status": "error", "message": "Неверный ключ"}), 401
 
+@app.route("/keys", methods=["GET"])
+def list_keys():
+    return jsonify({"keys": get_all_keys()})
+
+@app.route("/keys", methods=["POST"])
+def api_add_key():
+    data = request.get_json()
+    key = data.get("key", "")
+    if not key:
+        return jsonify({"status": "error", "message": "Ключ не передан"}), 400
+    add_key(key)
+    return jsonify({"status": "ok", "message": f"Ключ '{key}' добавлен"})
+
+@app.route("/keys", methods=["DELETE"])
+def api_delete_key():
+    data = request.get_json()
+    key = data.get("key", "")
+    if not key:
+        return jsonify({"status": "error", "message": "Ключ не передан"}), 400
+    delete_key(key)
+    return jsonify({"status": "ok", "message": f"Ключ '{key}' удалён"})
+
 # ===== HTML шаблоны =====
 LOGIN_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>Вход</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <title>Вход в админ-панель</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
-<body class="bg-light">
-<div class="container d-flex justify-content-center align-items-center" style="height:100vh;">
-  <div class="card shadow p-4" style="width: 350px;">
-    <h3 class="text-center mb-3">🔐 Вход в админ-панель</h3>
-    <form method="POST">
-      <div class="mb-3">
-        <label class="form-label">Логин</label>
-        <input type="text" name="username" class="form-control" required>
-      </div>
-      <div class="mb-3">
-        <label class="form-label">Пароль</label>
-        <input type="password" name="password" class="form-control" required>
-      </div>
-      <button type="submit" class="btn btn-primary w-100">Войти</button>
-    </form>
-    {% if error %}
-    <div class="alert alert-danger mt-3" role="alert">{{ error }}</div>
-    {% endif %}
-  </div>
+<body class="bg-light d-flex align-items-center justify-content-center" style="height:100vh;">
+<div class="card shadow p-4" style="width: 350px;">
+  <h4 class="mb-3 text-center">🔑 Вход</h4>
+  {% if error %}
+  <div class="alert alert-danger">{{ error }}</div>
+  {% endif %}
+  <form method="POST" action="{{ url_for('login') }}">
+    <div class="mb-3">
+      <label class="form-label">Логин</label>
+      <input type="text" class="form-control" name="username" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Пароль</label>
+      <input type="password" class="form-control" name="password" required>
+    </div>
+    <button type="submit" class="btn btn-primary w-100">Войти</button>
+  </form>
 </div>
 </body>
 </html>
@@ -104,35 +125,41 @@ ADMIN_TEMPLATE = """
 <head>
   <meta charset="UTF-8">
   <title>Управление ключами</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body class="bg-light">
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+<nav class="navbar navbar-dark bg-dark">
   <div class="container-fluid">
-    <a class="navbar-brand" href="#">🔑 Панель администратора</a>
-    <form class="d-flex" method="POST" action="{{ url_for('logout') }}">
-      <button class="btn btn-outline-light" type="submit">Выйти</button>
+    <a class="navbar-brand">🔑 Панель управления ключами</a>
+    <form method="POST" action="{{ url_for('logout') }}">
+      <button type="submit" class="btn btn-outline-light btn-sm">Выйти</button>
     </form>
   </div>
 </nav>
 
 <div class="container mt-4">
-  <h3>Список ключей</h3>
-  <ul class="list-group">
-    {% for key in keys %}
-      <li class="list-group-item d-flex justify-content-between align-items-center">
-        {{ key }}
-        {% if key != admin_key %}
-        <form method="POST" action="{{ url_for('delete_key_web') }}">
-          <input type="hidden" name="key" value="{{ key }}">
-          <button class="btn btn-sm btn-danger">Удалить</button>
-        </form>
-        {% else %}
-        <span class="badge bg-secondary">Нельзя удалить</span>
-        {% endif %}
-      </li>
-    {% endfor %}
-  </ul>
+  <h3 class="mb-3">Список ключей</h3>
+  <table class="table table-bordered table-striped bg-white shadow-sm">
+    <thead class="table-dark">
+      <tr>
+        <th>Ключ</th>
+        <th style="width: 150px;">Действие</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for key in keys %}
+      <tr>
+        <td>{{ key }}</td>
+        <td>
+          <form method="POST" action="{{ url_for('delete_key_web') }}">
+            <input type="hidden" name="key" value="{{ key }}">
+            <button type="submit" class="btn btn-sm btn-danger">Удалить</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 
   <h4 class="mt-4">Добавить новый ключ</h4>
   <form method="POST" action="{{ url_for('add_key_web') }}" class="d-flex">
@@ -144,14 +171,14 @@ ADMIN_TEMPLATE = """
 </html>
 """
 
-# ===== Веб-интерфейс =====
+# ===== Роуты для авторизации =====
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         username = request.form.get("username")
         password = request.form.get("password")
-        if username == ADMIN_LOGIN and password == ADMIN_PASSWORD:
-            session["admin"] = True
+        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            session["logged_in"] = True
             return redirect(url_for("admin_panel"))
         else:
             return render_template_string(LOGIN_TEMPLATE, error="Неверный логин или пароль")
@@ -159,22 +186,18 @@ def login():
 
 @app.route("/logout", methods=["POST"])
 def logout():
-    session.pop("admin", None)
+    session.clear()
     return redirect(url_for("login"))
-
-def require_admin():
-    return "admin" in session
 
 @app.route("/admin", methods=["GET"])
 def admin_panel():
-    if not require_admin():
+    if not session.get("logged_in"):
         return redirect(url_for("login"))
-    keys = get_all_keys()
-    return render_template_string(ADMIN_TEMPLATE, keys=keys, admin_key=ADMIN_KEY)
+    return render_template_string(ADMIN_TEMPLATE, keys=get_all_keys())
 
 @app.route("/admin/add", methods=["POST"])
 def add_key_web():
-    if not require_admin():
+    if not session.get("logged_in"):
         return redirect(url_for("login"))
     key = request.form.get("key")
     if key:
@@ -183,16 +206,18 @@ def add_key_web():
 
 @app.route("/admin/delete", methods=["POST"])
 def delete_key_web():
-    if not require_admin():
+    if not session.get("logged_in"):
         return redirect(url_for("login"))
     key = request.form.get("key")
-    if key and key != ADMIN_KEY:
+    if key:
         delete_key(key)
     return redirect(url_for("admin_panel"))
 
 # ===== Запуск =====
 if __name__ == "__main__":
-    init_db()
-    add_key(ADMIN_KEY)  # всегда гарантируем наличие admin123
-    port = int(os.environ.get("PORT", 5000))
+    if not os.path.exists(DB_FILE):
+        init_db()
+        add_key("admin123")  # дефолтный админ-ключ
+
+    port = int(os.environ.get("PORT", 5000))  # Render задаст свой порт
     app.run(host="0.0.0.0", port=port)
