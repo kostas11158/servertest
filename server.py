@@ -216,8 +216,7 @@ def delete_key_web():
 # ===== Запуск =====
 if __name__ == "__main__":
     if not os.path.exists(DB_FILE):
-        init_db()
-        add_key("admin123")  # дефолтный админ-ключ
-
-    port = int(os.environ.get("PORT", 5000))  # Render задаст свой порт
+            init_db()               # всегда создаём таблицу, если её нет
+    add_key("admin123")     # гарантируем ключ
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
